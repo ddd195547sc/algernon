@@ -183,6 +183,7 @@ input.sw:checked::after{transform:translateX(16px)}
 <symbol id="p-dup" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M5 15V6a1 1 0 0 1 1-1h9"/></symbol>
 <symbol id="p-cp" viewBox="0 0 24 24"><rect x="9" y="9" width="10" height="11" rx="2"/><path d="M15 9V6a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
 <symbol id="p-mg" viewBox="0 0 24 24"><path d="M6 4v5a4 4 0 0 0 4 4h4a4 4 0 0 1 4 4v3M18 4v5M12 13v7"/></symbol>
+<symbol id="p-sp" viewBox="0 0 24 24"><path d="M12 4v5M12 15v5M5 12h14"/><path d="M8 9l4-3 4 3M8 15l4 3 4-3"/></symbol>
 <symbol id="p-tr" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></symbol>
 <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4"/><path d="M8 20v-6h8v6"/></symbol>
 </defs></svg>
@@ -278,7 +279,7 @@ function diaryHtml(chs){var out=[];chs.forEach(function(c){String(c.text||'').re
 <script>
 (function(){
 'use strict';
-var APP_V='1.13'; /* sw.js の V(algernon-v12)の数字と、小数点以下を必ず合わせる */
+var APP_V='1.14'; /* sw.js の V(algernon-v12)の数字と、小数点以下を必ず合わせる */
 var LS='genkocho.v1',LSP='genkocho.v1.prev';
 function $(id){return document.getElementById(id)}
 function uid(){return 'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
@@ -338,6 +339,11 @@ var cT=0;
 function updateCount(){var c=C(),n=countChars(c.text,D.s.cm),g=genkou(c.text);$('c1').textContent=fmtN(n)+'字';$('c2').textContent=' ・ '+g.sheets.toFixed(1)+'枚'}
 function afterEdit(prog){clearTimeout(cT);cT=setTimeout(updateCount,120);schedSaveUI();schedSave();scheduleCloud();clearTimeout(uT);uT=setTimeout(pushUndo,500);if(!prog)app.classList.add('typing');maybeSnap()}
 ed.addEventListener('input',function(){var c=C();c.text=getText(ed);c.at=now();W().at=now();afterEdit(false)});
+/* 本文のカーソル位置(章の分割用)。章メニューを開くと選択が外れるので、最後の位置を覚えておく */
+var lastCaret=null;
+function caretOffset(){var s=getSelection();if(!s||!s.rangeCount)return null;var r=s.getRangeAt(0);if(!ed.contains(r.startContainer))return null;
+  var pr=document.createRange();pr.selectNodeContents(ed);pr.setEnd(r.startContainer,r.startOffset);var w=document.createElement('div');w.appendChild(pr.cloneContents());return getText(w).length}
+document.addEventListener('selectionchange',function(){var o=caretOffset();if(o===null)return;lastCaret={id:C().id,off:o}});
 ed.addEventListener('beforeinput',function(e){if(e.inputType==='historyUndo'){e.preventDefault();undo()}else if(e.inputType==='historyRedo'){e.preventDefault();redo()}});
 ed.addEventListener('paste',function(e){e.preventDefault();var t=(e.clipboardData||window.clipboardData).getData('text/plain').replace(/\r\n?/g,'\n');document.execCommand('insertText',false,t)});
 $('main').addEventListener('pointerup',function(){app.classList.remove('typing')});
@@ -368,6 +374,14 @@ function chMerge(id){var w=W(),i=chIdx(id);if(i<1)return;var c=w.chs[i],p=w.chs[
   p.text=(p.text&&c.text)?p.text.replace(/\n+$/,'')+'\n\n'+c.text:(p.text||c.text);p.at=now();
   w.chs.splice(i,1);w.trash.unshift({c:c,i:i});if(w.trash.length>10)w.trash.length=10;if(w.cur===c.id)w.cur=p.id;chTouch();renderAll();
   toast('「'+c.title+'」を「'+p.title+'」に結合しました',{label:'元に戻す',fn:function(){var k=w.trash.map(function(t){return t.c.id}).indexOf(c.id);if(k>=0)w.trash.splice(k,1);p.text=oldP;if(w.chs.indexOf(c)<0)w.chs.splice(Math.min(i,w.chs.length),0,c);w.cur=oldCur;chTouch();renderAll()}})}
+function splitPoint(c){if(!lastCaret||lastCaret.id!==c.id)return -1;var t=c.text,o=lastCaret.off;if(o>t.length)return -1;
+  if(!t.slice(0,o).trim()||!t.slice(o).trim())return -1;return o}
+function chSplit(id){var w=W(),i=chIdx(id);if(i<0)return;var c=w.chs[i],o=splitPoint(c);if(o<0){toast('分割する位置を、本文の中でタップしてから開いてください');return}
+  var oldText=c.text,oldCur=w.cur,oldAt=c.at;snap(c,true);
+  var head=oldText.slice(0,o).replace(/\n+$/,''),tail=oldText.slice(o).replace(/^\n+/,'');
+  var n=newChapter(c.title+' 2');n.text=tail;c.text=head;c.at=now();pushUndo();
+  w.chs.splice(i+1,0,n);w.cur=n.id;lastCaret=null;W().at=now();chTouch();renderAll();
+  toast('「'+c.title+'」を2つに分けました',{label:'元に戻す',fn:function(){var k=w.chs.indexOf(n);if(k>=0)w.chs.splice(k,1);c.text=oldText;c.at=oldAt;w.cur=oldCur;chTouch();renderAll()}})}
 function trashSheet(){var w=W();var h='';
   if(!w.trash.length)h='<p class="sub">最近削除した章はありません。</p>';
   w.trash.forEach(function(t,k){h+='<div class="row"><span>'+esc(t.c.title)+'<small>'+fmtN(countChars(t.c.text,D.s.cm))+'字 ・ '+esc(t.c.text.replace(/\s+/g,' ').slice(0,18))+'</small></span><button class="btn" data-k="'+k+'">戻す</button></div>'});
@@ -377,7 +391,7 @@ function trashSheet(){var w=W();var h='';
 var pop=null;
 function closePop(){if(!pop)return;document.removeEventListener('keydown',pop.kd,true);pop.mask.remove();pop.el.remove();var b=document.querySelector('#dw-list .ib.ex');if(b)b.classList.remove('ex');pop=null}
 function openPop(id,rect,pt){closePop();var w=W(),k=chIdx(id);if(k<0)return;var c=w.chs[k],first=k===0,last=k===w.chs.length-1;
-  var IT=[['ren','p-ed','名前を変更'],0,['top','p-top','先頭へ',first],['end','p-end','末尾へ',last],['before','p-ins','この前に章を挿入'],['after','p-ins','この後に章を挿入'],['dup','p-dup','複製'],['cpy','p-cp','本文をコピー'],['mrg','p-mg','前の章と結合',first],0,['del','p-tr','削除…',false,1]];
+  var IT=[['ren','p-ed','名前を変更'],0,['top','p-top','先頭へ',first],['end','p-end','末尾へ',last],['before','p-ins','この前に章を挿入'],['after','p-ins','この後に章を挿入'],['dup','p-dup','複製'],['cpy','p-cp','本文をコピー'],['mrg','p-mg','前の章と結合',first],['spl','p-sp','カーソル位置で2つに分ける',splitPoint(c)<0],0,['del','p-tr','削除…',false,1]];
   var h='<div class="ph">'+esc(c.title)+' ・ '+fmtN(countChars(c.text,D.s.cm))+'字 ・ '+genkou(c.text).sheets.toFixed(1)+'枚</div>';
   IT.forEach(function(t){h+=t?'<button class="it'+(t[4]?' dg':'')+'" role="menuitem" data-a="'+t[0]+'"'+(t[3]?' disabled':'')+'><svg class="i"><use href="#'+t[1]+'"/></svg>'+t[2]+'</button>':'<hr>'});
   var mask=document.createElement('div');mask.id='pmask';var el=document.createElement('div');el.id='pmenu';el.setAttribute('role','menu');el.setAttribute('aria-label','章のメニュー');el.innerHTML=h;el.style.visibility='hidden';
@@ -395,7 +409,7 @@ function openPop(id,rect,pt){closePop();var w=W(),k=chIdx(id);if(k<0)return;var 
   el.addEventListener('contextmenu',function(e){e.preventDefault()});
   el.addEventListener('click',function(e){var b=e.target.closest('button.it');if(!b||b.disabled)return;var a=b.dataset.a;closePop();
     if(a==='ren'){var row=document.querySelector('.ch[data-id="'+id+'"]');if(isDock())rowEdit(row);else renameDialog(id)}
-    else if(a==='top'||a==='end')chMove(id,a);else if(a==='before'||a==='after')chInsert(id,a);else if(a==='dup')chDup(id);else if(a==='cpy')chCopy(id);else if(a==='mrg')chMerge(id);else if(a==='del')delAsk(id)});
+    else if(a==='top'||a==='end')chMove(id,a);else if(a==='before'||a==='after')chInsert(id,a);else if(a==='dup')chDup(id);else if(a==='cpy')chCopy(id);else if(a==='mrg')chMerge(id);else if(a==='spl')chSplit(id);else if(a==='del')delAsk(id)});
   pop={el:el,mask:mask,kd:kd}}
 function chRename(id,v){v=(v||'').trim();var c=W().chs.filter(function(x){return x.id===id})[0];if(!c||!v||v===c.title)return;c.title=v;W().at=now();persist();renderTitle();scheduleCloud();var n=document.querySelector('.ch[data-id="'+id+'"] .cn');if(n)n.textContent=v}
 function renderDrawer(){closePop();var w=W();$('dw-title').textContent=w.title;
@@ -521,7 +535,7 @@ function dateStr(){var d=new Date();return d.getFullYear()+pad(d.getMonth()+1)+p
 function outSheet(){var o=eo(),w=W(),c=C();
   var sum='段落頭の全角スペース:'+(o.indent?'あり':'なし')+' ／ 段落間の空行:'+(o.blank?'あり':'なし')+' ／ ルビ・傍点:'+({keep:'そのまま',paren:'括弧書き',strip:'外す'}[o.ruby]);
   var fl=fileHtml();
-  sheet('ファイルと書き出し',fl+'<div class="sec">投稿サイト向け</div><div class="acts"><button class="btn pri" id="x1">この章の本文をコピー</button><button class="btn" id="x2">全章をまとめてコピー</button></div><p class="sub">'+esc(sum)+'。整形は設定の「書き出しの整形」で変えられます。</p><div class="sec">ファイルで保存</div><div class="acts"><button class="btn" id="x3">この章をtxtで保存</button><button class="btn" id="x4">投稿用に整形して、全章を1つのtxtで保存</button><button class="btn" id="x5">章ごとのtxtをZIPで保存</button><button class="btn" id="x6">Word(docx)で保存</button></div><div class="sec">日記サイト用</div><div class="acts"><button class="btn" id="x8">日記用HTMLで保存</button></div><p class="sub">いま開いている作品を、サイトの日記の本文ファイル(diary_paragraphs_日付.html)にして保存します。</p><div class="acts"><button class="btn lnk" id="x7">ルビや傍点をプレビューで確認</button></div>',function(r){
+  sheet('ファイルと書き出し',fl+'<div class="sec">投稿サイト向け</div><div class="acts"><button class="btn pri" id="x1">この章の本文をコピー</button><button class="btn" id="x2">全章をまとめてコピー</button></div><p class="sub">'+esc(sum)+'。整形は設定の「書き出しの整形」で変えられます。</p><div class="sec">ファイルで保存</div><div class="acts"><button class="btn" id="x3">この章をtxtで保存</button><button class="btn" id="x4">投稿用に整形して、全章を1つのtxtで保存</button><button class="btn" id="x5">章ごとのtxtをZIPで保存</button><button class="btn" id="x6">Word(docx)で保存</button></div><div class="sec">日記サイト用</div><div class="acts"><button class="btn" id="x8">日記用HTMLで保存</button></div><p class="sub">いま開いている作品を、サイトの日記の本文ファイル(diary_paragraphs_日付.html)にして保存します。</p><div class="sec">作品サイト用</div><div class="acts"><button class="btn" id="x9">この章を作品用HTMLで保存</button></div><p class="sub">いま開いている章を、サイトの作品の本文ファイル({名前}_paragraphs.html)にして保存します。長い章は、区切りの場所を選んで、複数ページに分けられます。</p><div class="acts"><button class="btn lnk" id="x7">ルビや傍点をプレビューで確認</button></div>',function(r){
     fileBind(r);
     r.querySelector('#x1').onclick=function(){copyText(chapterTxt(c,o,false))};
     r.querySelector('#x2').onclick=function(){copyText(workTxt(w,o))};
@@ -529,7 +543,7 @@ function outSheet(){var o=eo(),w=W(),c=C();
     r.querySelector('#x4').onclick=function(){saveFile(safeName(w.title)+'.txt',workTxt(w,o))};
     r.querySelector('#x5').onclick=function(){if(!window.JSZip){toast('ZIPを作成できませんでした');return}var z=new JSZip();w.chs.forEach(function(ch,i){z.file(pad(i+1)+'_'+safeName(ch.title)+'.txt',chapterTxt(ch,o,false)+'\n')});z.generateAsync({type:'blob',compression:'DEFLATE'}).then(function(b){saveFile(safeName(w.title)+'.zip',b)},function(){toast('ZIPを作成できませんでした')})};
     r.querySelector('#x6').onclick=function(){if(!window.JSZip){toast('docxを作成できませんでした');return}var z=new JSZip();z.file('[Content_Types].xml',DX_CT);z.file('_rels/.rels',DX_RELS);z.file('word/document.xml',docXml(w,o));z.file('word/_rels/document.xml.rels',DX_DRELS);z.file('word/styles.xml',DX_STY);z.generateAsync({type:'blob',compression:'DEFLATE'}).then(function(b){saveFile(safeName(w.title)+'.docx',b)},function(){toast('docxを作成できませんでした')})};
-    r.querySelector('#x8').onclick=diarySheet;
+    r.querySelector('#x8').onclick=diarySheet;r.querySelector('#x9').onclick=workSheet;
     r.querySelector('#x7').onclick=previewOpen})}
 
 /* ===== 作品=1つのtxtファイル。パソコンでは同じファイルへ上書き保存(File System Access API)、対応しない端末では共有/ダウンロード ===== */
@@ -708,6 +722,51 @@ function diarySheet(){var w=W(),t=new Date(),ds=t.getFullYear()+'-'+pad(t.getMon
       try{var h=await showSaveFilePicker({suggestedName:n,id:'algernon-diary',types:[{description:'HTMLファイル',accept:{'text/html':['.html']}}]});
         var wr=await h.createWritable();await wr.write(new Blob([html],{type:'text/html'}));await wr.close();closeLayers();toast('「'+h.name+'」に保存しました')}
       catch(e){if(e&&e.name==='AbortError')return;toast('保存できませんでした')}}})}
+
+/* 作品用HTML(サイトの {slug}_paragraphs.html / {slug}_pageN_paragraphs.html)を書き出す。いま開いている章が対象 */
+function workParaHtml(lines){var out=[];lines.forEach(function(l){l=l.replace(/\s+$/,'').replace(/^[ \t]+/,'');if(l.trim()==='')return;
+    var pl=plain(l).trim();
+    if(pl==='◇'||pl==='◆'){out.push('<p>'+pl+'</p>');return}
+    var lead=/^[「『（【〈“　]/.test(plain(l));
+    var h=parseLine(l).map(function(p){return p.t==='x'?he(p.s):p.t==='e'?'<span class="kenten">'+he(p.s)+'</span>':'<ruby>'+he(p.b)+'<rt>'+he(p.r)+'</rt></ruby>'}).join('');
+    out.push('<p>'+(lead?'':'　')+h+'</p>')});
+  return out.join('\n              ')}
+function siteCount(lines){var n=0;lines.forEach(function(l){var t=plain(l.replace(/\s+$/,'').replace(/^[ \t]+/,''));if(t.trim()==='')return;if(t.trim()==='◇'||t.trim()==='◆'){n+=1;return}n+=t.replace(/^　/,'').length});return n}
+/* 区切りの候補: ◇/◆ だけの行、または空行が2行以上続く所。返す値: {line: 次のページが始まる行番号, kind, before, after, pos} */
+function splitCands(lines){var cands=[],i=0;
+  while(i<lines.length){var t=lines[i].trim();
+    if(t==='◇'||t==='◆'){cands.push({line:i,kind:t,i:i});i++;continue}
+    if(t===''){var j=i;while(j<lines.length&&lines[j].trim()==='')j++;if(j-i>=2&&j<lines.length&&i>0){cands.push({line:j,kind:'空行'+(j-i)+'行',i:j})}i=j;continue}
+    i++}
+  return cands}
+function workSheet(){var w=W(),c=C(),lines=String(c.text||'').replace(/\r\n?/g,'\n').split('\n');
+  if(!c.text.trim()){toast('本文がありません');return}
+  var cands=splitCands(lines),total=siteCount(lines);
+  var ch='';cands.forEach(function(k,x){var before=siteCount(lines.slice(0,k.line)),prev=plain(lines.slice(0,k.line).filter(function(l){return l.trim()&&l.trim()!=='◇'&&l.trim()!=='◆'}).slice(-1)[0]||'').slice(-14),next=plain(lines.slice(k.line).filter(function(l){return l.trim()&&l.trim()!=='◇'&&l.trim()!=='◆'})[0]||'').replace(/^　/,'').slice(0,14);
+    ch+='<label class="row"><span>'+esc(k.kind)+'・'+fmtN(before)+'字の所('+Math.round(before/Math.max(1,total)*100)+'%)<small>…'+esc(prev)+' ／ '+esc(next)+'…</small></span><input type="checkbox" class="sw" role="switch" data-k="'+x+'"></label>'});
+  sheet('作品用HTMLで保存','<div class="sec">ファイル名</div><label class="fl">ファイルの名前の前半(半角の英小文字・数字・ハイフン・アンダースコア)<input id="wslug" type="text" inputmode="latin" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="例: kasa-wo-wasureta_chapter4"></label><p class="sub" id="wn"></p>'
+    +'<div class="sec">ページの区切り</div>'+(cands.length?ch:'<p class="sub">区切りの候補(◇ や ◆ だけの行、空行が2行以上続く所)が、この章にはありません。1ページで保存します。</p>')
+    +'<p class="sub" id="wsum"></p><div class="acts"><button class="btn pri" id="wsave">保存</button></div>'
+    +'<p class="sub">「'+esc(c.title)+'」を、約'+fmtN(total)+'字(サイトの数え方の目安)の本文ファイルにします。1行を1段落にし(空行は段落になりません)、段落の頭に全角スペースを付け(「『（などで始まる行は付けません)、ルビと傍点はサイトの書き方に変えます。◇ ◆ の行は、そのまま1段落にします。◇ ◆ で分けたときは、その行が次のページの最初の段落になります。ページの文字数は、build.bat が数え直します。複数ページにしたときは、1つのZIPにまとめます。</p>',function(r){
+    var sl=r.querySelector('#wslug'),wn=r.querySelector('#wn'),sm=r.querySelector('#wsum');
+    function picked(){var a=[];r.querySelectorAll('input[data-k]').forEach(function(b){if(b.checked)a.push(cands[+b.dataset.k].line)});return a.sort(function(x,y){return x-y})}
+    function pages(){var br=picked(),pg=[],st=0;br.concat([lines.length]).forEach(function(e){pg.push(lines.slice(st,e));st=e});return pg}
+    function slugOk(){return /^[a-z0-9]+([-_][a-z0-9]+)*$/.test(sl.value)}
+    function names(){var n=pages().length;if(!slugOk())return [];if(n===1)return [sl.value+'_paragraphs.html'];var a=[];for(var i=1;i<=n;i++)a.push(sl.value+'_page'+i+'_paragraphs.html');return a}
+    function show(){var pg=pages(),nm=names();wn.textContent=slugOk()?'ファイル名: '+(nm.length>1?nm.join(' ・ '):nm[0]):'名前を、半角の英小文字・数字・ハイフン・アンダースコアで入れてください(例: kasa-wo-wasureta_chapter4)';
+      sm.textContent=pg.length+'ページ: '+pg.map(function(p){return fmtN(siteCount(p))+'字'}).join(' ・ ')}
+    sl.addEventListener('input',show);r.querySelectorAll('input[data-k]').forEach(function(b){b.addEventListener('change',show)});show();
+    r.querySelector('#wsave').onclick=async function(){if(!slugOk()){toast('ファイルの名前を入れてください');sl.focus();return}
+      var pg=pages(),nm=names();
+      var htmls=pg.map(function(p){return workParaHtml(p)});if(htmls.some(function(h){return !h})){toast('本文のないページができます。区切りの選び方を変えてください');return}
+      if(pg.length===1){var html=htmls[0],n=nm[0];
+        if(!FS){if(await saveFile(n,html))closeLayers();return}
+        try{var h=await showSaveFilePicker({suggestedName:n,id:'algernon-work',types:[{description:'HTMLファイル',accept:{'text/html':['.html']}}]});
+          var wr=await h.createWritable();await wr.write(new Blob([html],{type:'text/html'}));await wr.close();closeLayers();toast('「'+h.name+'」に保存しました')}
+        catch(e){if(e&&e.name==='AbortError')return;toast('保存できませんでした')}return}
+      if(!window.JSZip){toast('ZIPを作成できませんでした');return}
+      var z=new JSZip();nm.forEach(function(n,i){z.file(n,htmls[i])});
+      z.generateAsync({type:'blob',compression:'DEFLATE'}).then(function(b){saveFile(sl.value+'_paragraphs.zip',b).then(function(ok){if(ok)closeLayers()})},function(){toast('ZIPを作成できませんでした')})}})}
 
 function previewOpen(){closeLayers();var h='';C().text.replace(/\n+$/,'').split('\n').forEach(function(l){h+='<p>'+(l.trim()===''?'&nbsp;':parseLine(l).map(function(p){return p.t==='x'?esc(p.s):p.t==='e'?'<em>'+esc(p.s)+'</em>':'<ruby>'+esc(p.b)+'<rt>'+esc(p.r)+'</rt></ruby>'}).join(''))+'</p>'});
   var pv=$('pv');pv.innerHTML=h||'<p>(本文がありません)</p>';pv.classList.toggle('v',D.s.dir==='v');$('prev').hidden=false;pv.scrollTop=0;pv.scrollLeft=0;$('pv-x').focus({preventScroll:true})}
